@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Super Mario: The Rescue</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        * { touch-action: manipulation; } /* Disables double-tap to zoom */
+        body { 
+            margin: 0; 
+            background: #000; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            width: 100vw;
+            overflow: hidden; 
+            font-family: 'Courier New', monospace; 
+        }
+        canvas { 
+            image-rendering: pixelated; 
+            background: linear-gradient(#5C94FC, #92B9FC); 
+            box-shadow: 0 0 20px #000;
+            max-width: 100%;
+            max-height: 100%;
+            height: 100vh; /* Forces full height */
+            aspect-ratio: 3 / 4; /* Keeps the retro vertical look */
+        }
+        #ui { 
+            position: absolute; 
+            top: 5%; 
+            width: 100%;
+            text-align: center; 
+            color: white; 
+            text-shadow: 3px 3px #000; 
+            pointer-events: none; 
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1 id="score" style="font-size: 8vw; margin: 0;">0</h1>
+        <p id="msg" style="font-size: 4vw;">TAP TO FLY</p>
+    </div>
+    <canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+// Responsive Scaling
+canvas.width = 450; 
+canvas.height = 600;
+
+let frame = 0, score = 0, gameOver = false, gameWon = false, worldStopped = false, bgScroll = 0, endFade = 0;
+let mario = { x: 80, y: 250, w: 42, h: 56, vel: 0, gravity: 0.22, jump: -5.8 };
+let castleX = 600;
+let pipes = [], clouds = [{x:100,y:80,s:0.5}, {x:300,y:150,s:0.8}, {x:500,y:50,s:0.3}];
+
+// PIXEL MAPS
+const marioMap = [[0,0,0,1,1,1,1,1,0,0,0,0],[0,0,1,1,1,1,1,1,1,1,1,0],[0,0,4,4,4,2,2,5,2,0,0,0],[0,4,2,4,2,2,2,5,2,2,2,0],[0,4,2,4,4,2,2,2,5,2,2,2],[0,4,4,2,2,2,2,5,5,5,5,0],[0,0,0,2,2,2,2,2,2,2,0,0],[0,0,1,1,3,1,1,1,0,0,0,0],[0,1,1,1,3,1,1,3,1,1,1,0],[1,1,1,1,3,3,3,3,1,1,1,1],[2,2,1,3,3,3,3,3,3,1,2,2],[2,2,2,3,3,3,3,3,3,2,2,2],[2,2,3,3,3,3,3,3,3,3,2,2],[0,0,3,3,3,0,0,3,3,3,0,0],[0,4,4,4,0,0,0,0,4,4,4,0],[4,4,4,4,0,0,0,0,4,4,4,4]];
+const peachMap = [[0,0,0,6,6,6,0,0,0],[0,0,7,7,7,7,7,0,0],[0,7,7,2,2,2,7,7,0],[0,7,2,2,5,2,2,7,0],[0,7,2,2,2,2,2,7,0],[0,0,7,7,7,7,7,0,0],[0,0,8,8,3,8,8,0,0],[0,8,8,8,3,8,8,8,0],[8,8,8,8,8,8,8,8,8],[8,8,8,8,8,8,8,8,8],[8,8,8,8,8,8,8,8,8],[8,8,8,8,8,8,8,8,8],[0,4,4,0,0,0,4,4,0]];
+const wingMap = [[1,1,1,1,1,0,0,0],[1,1,1,1,1,1,1,0],[0,1,1,1,1,1,1,1],[0,0,1,1,1,1,1,1],[0,0,0,0,1,1,1,1],[0,0,0,0,0,1,1,1]];
+
+function drawPixelMap(map, x, y, size, colors, rot = 0, px = 0, py = 0) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+    map.forEach((row, ry) => { row.forEach((col, rx) => { if (col === 0) return; ctx.fillStyle = Array.isArray(colors) ? colors[col] : colors; ctx.fillRect((rx - px) * size, (ry - py) * size, size, size); }); });
+    ctx.restore();
+}
+
+function drawPipe(p) {
+    const w = p.w, h = p.h, isTop = p.y === 0;
+    // Metallic Green Texture
+    ctx.fillStyle = "#000"; ctx.fillRect(p.x - 2, p.y, w + 4, h);
+    ctx.fillStyle = "#107010"; ctx.fillRect(p.x, p.y, w, h);
+    ctx.fillStyle = "#70C010"; ctx.fillRect(p.x+8, p.y, w-24, h);
+    ctx.fillStyle = "#D0F890"; ctx.fillRect(p.x+14, p.y, 6, h); // Highlight
+    
+    let lipY = isTop ? h - 35 : p.y;
+    ctx.fillStyle = "#000"; ctx.fillRect(p.x - 8, lipY - 2, w + 16, 39);
+    ctx.fillStyle = "#70C010"; ctx.fillRect(p.x - 6, lipY, w + 12, 35);
+    ctx.fillStyle = "#003800"; ctx.fillRect(p.x - 6, isTop?lipY:lipY+31, w+12, 4); // Groove
+}
+
+function update() {
+    if (gameOver || worldStopped) return;
+    frame++;
+
+    if (!gameWon) {
+        mario.vel += mario.gravity; mario.y += mario.vel; bgScroll -= 3.5;
+        if (frame % 85 === 0 && score < 15) { // Set to 15 pipes to win
+            let h = Math.random() * 240 + 60;
+            pipes.push({ x: 450, y: 0, w: 75, h: h, passed: false });
+            pipes.push({ x: 450, y: h + 165, w: 75, h: 600, passed: false });
+        }
+        if (score >= 15 && pipes.length === 0) gameWon = true;
+    } else {
+        castleX -= 2.5; bgScroll -= 2.5;
+        mario.y += (mario.y < 490) ? 2.5 : 0; // Descend to Peach
+        mario.x += (mario.x < 150) ? 1 : 0;  // Move forward slightly
+        if (castleX <= 120) worldStopped = true;
+    }
+
+    pipes.forEach(p => { 
+        p.x -= 3.5; 
+        if (!gameWon && mario.x+15 < p.x+p.w && mario.x+30 > p.x && mario.y+10 < p.y+p.h && mario.y+40 > p.y) gameOver = true;
+        if (!p.passed && p.x < mario.x && p.y !== 0) { score++; p.passed = true; } 
+    });
+
+    clouds.forEach(c => { c.x -= c.s; if(c.x < -100) c.x = 500; });
+    if (mario.y > 515 || mario.y < -50) gameOver = true;
+    pipes = pipes.filter(p => p.x > -100);
+}
+
+function draw() {
+    ctx.clearRect(0,0,450,600);
+    // Floor
+    ctx.fillStyle = "#D85800"; ctx.fillRect(0, 550, 450, 50);
+    for(let i=0; i<520; i+=40) { ctx.fillStyle = "#730"; ctx.fillRect((i + bgScroll % 40), 555, 4, 45); }
+
+    pipes.forEach(drawPipe);
+    
+    if (gameWon) {
+        // Castle
+        ctx.fillStyle = "#888"; ctx.fillRect(castleX, 350, 150, 200); 
+        ctx.fillStyle = "#B8B8B8"; ctx.fillRect(castleX+5, 350, 140, 200);
+        ctx.fillStyle = "#211"; ctx.fillRect(castleX+55, 480, 40, 70); // Door
+        // Princess
+        drawPixelMap(peachMap, castleX + 110, 490, 4, [null, "#000", "#FCA", "#00F", "#740", "#000", "#FF0", "#FD0", "#F8B"]);
+        if (worldStopped) {
+            ctx.fillStyle = "#F00";
+            ctx.fillRect(castleX + 115, 460 + Math.sin(frame*0.1)*5, 10, 10); // Heart
+        }
+    }
+
+    let wingFlap = worldStopped ? 0 : Math.sin(frame * (mario.vel < 0 ? 0.6 : 0.3)) * 0.7;
+    drawPixelMap(wingMap, mario.x + 8, mario.y + 10, 4, "#999", -wingFlap, 8, 2);
+    drawPixelMap(marioMap, mario.x, mario.y, 3.5, [null, "#F00", "#FCA", "#04F", "#630", "#000"]);
+    drawPixelMap(wingMap, mario.x + 18, mario.y + 14, 4, "#FFF", -wingFlap, 8, 2);
+
+    if (worldStopped) {
+        endFade = Math.min(1, endFade + 0.01);
+        ctx.fillStyle = `rgba(0,0,0,${endFade * 0.4})`; ctx.fillRect(0,0,450,600);
+        ctx.fillStyle = `rgba(255,215,0,${endFade})`; ctx.font = "bold 40px Courier New";
+        ctx.textAlign = "center"; ctx.fillText("THE END", 225, 250);
+        document.getElementById("msg").innerHTML = "TAP TO RESTART";
+    }
+    if (gameOver) document.getElementById("msg").innerHTML = "GAME OVER<br>TAP TO RESTART";
+    document.getElementById("score").innerHTML = score;
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+const action = (e) => { 
+    if(e) e.preventDefault();
+    if(gameOver || worldStopped) location.reload(); 
+    else if(!gameWon) mario.vel = mario.jump; 
+};
+window.addEventListener("keydown", (e) => { if(e.code === "Space") action(); });
+canvas.addEventListener("touchstart", action, {passive: false});
+loop();
+</script>
+</body>
+</html>
